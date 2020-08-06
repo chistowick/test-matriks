@@ -60,11 +60,11 @@ foreach ($phrases as $key => $phrase) {
         $marker = FALSE;
         $originalKey = FALSE;
 
-        foreach ($words as $key_3 => $word) {
-            if ($word['text'] == $part) {
+        for ($m = 1; $m <= count($words); $m++) {
+            if ($words[$m]['text'] == $part) {
 
                 // Если слово есть в массиве, запоминаем ключ элемента и устанавливаем маркер
-                $originalKey = $key_3;
+                $originalKey = $m;
                 $marker = TRUE;
                 break;
             }
@@ -82,6 +82,9 @@ foreach ($phrases as $key => $phrase) {
             $words[$wordsCounter]['text'] = $part; // Текст самого слова
             $words[$wordsCounter]['numCount'] = 1; // Начальное значение счетчика появления слова в тексте
             $words[$wordsCounter]['next_is_count'] = array(); // Массив счетчиков появления следующих слов
+            $words[$wordsCounter]['probability_next_is'] = array(); // Массив вероятностей появления следующих слов
+            $words[$wordsCounter]['firsProbability'] = 0; // Вероятность, что слово первое (начальное значение)
+            $words[$wordsCounter]['lastProbability'] = 0; // Вероятность, что слово последнее (начальное значение)
 
             // Если слово первое в массиве, увеличиваем счетчик первых вхождений
             if ($key_2 == 0) {
@@ -139,25 +142,25 @@ foreach ($phrases as $key => $phrase) {
     }
 }
 
-
-foreach ($words as $key_4 => $word) {
+// Вычисляем вероятности
+for ($l = 1; $l <= count($words); $l++){
 
     // Находим вероятность того, что слово первое во фразе
-    $word['firsProbability'] = ($word['firstCount'] ?: 0) / PHRASES_COUNT;
+    $words[$l]['firsProbability'] = ($words[$l]['firstCount'] ?: 0) / PHRASES_COUNT;
 
     // Находим вероятность того, что слово последнее во фразе
-    $word['lastProbability'] = ($word['lastCount'] ?: 0) / PHRASES_COUNT;
+    $words[$l]['lastProbability'] = ($words[$l]['lastCount'] ?: 0) / PHRASES_COUNT;
 
-    // Находим, с какой вероятностью после этого слова идут те или иные слова
-    foreach ($word['next_is_count'] as $key_5 => $next_is_count) {
+    // Находим, с какой вероятностью после этого слова идут те или иные слова (для которых существуют счетчики)
+    foreach ($words[$l]['next_is_count'] as $key_5 => $next_is_count) {
 
         // Вероятность равна отношению количества появления слова-2 после слова-1
         // к общему количеству НЕпоследних появлений слова-1 в тексте
-        $word['probability_next_is'][$key_5] = $next_is_count / ($word['numCount'] - $word['lastCount']);
+        $words[$l]['probability_next_is'][$key_5] = ($next_is_count / ($words[$l]['numCount'] - $words[$l]['lastCount']));
     }
 
-    // echo '<hr>' . $key_4 . '<br>';
-    // var_dump($word);
+    echo '<hr>' . $l . '<br>';
+    var_dump($words[$l]);
 }
 
 // Задаем значение количества фраз в тексте
@@ -169,7 +172,7 @@ require_once(__DIR__ . '/app/Database.php');
 // Подключаемся к базе данных с конфигурацией в файле по адресу
 $dbh = Database::getConnection(__DIR__ . '/config/db.php');
 
-$tableName = 'words_probabilities' . date("His");
+$tableName = 'words_probabilities_' . date("H_i_s");
 
 // Формируем запрос на создание таблицы
 $sql = "CREATE TABLE IF NOT EXISTS `$tableName` ( ";
@@ -180,7 +183,7 @@ $sql .= "`lastProbability` FLOAT(20) UNSIGNED NULL DEFAULT NULL, ";
 
 // Формируем столбцы по количеству слов в массиве
 for ($i = 1; $i <= WORDS_COUNT; $i++) {
-    $sql .= "`$i` FLOAT(20) UNSIGNED NULL DEFAULT NULL, ";
+    $sql .= "`$i` FLOAT(20) UNSIGNED NOT NULL DEFAULT '0', ";
 }
 
 $sql .= "PRIMARY KEY (id)) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci ENGINE = MyISAM";
@@ -192,3 +195,61 @@ if ($pdostmt = $dbh->query($sql)) {
     echo "Таблица $tableName создана успешно";
 }
 
+$sql = "INSERT INTO `$tableName`";
+$sql .= " (`id`, `text`, `firsProbability`, `lastProbability`";
+
+// Формируем названия столбцов
+for ($i = 1; $i <= WORDS_COUNT; $i++) {
+    $sql .= ", `$i`";
+}
+
+$sql .= ") VALUES ";
+
+// Формируем плейсхолдеры для значений вероятностей
+$sql .= "(?, ?, ?, ?";
+
+for ($j = 1; $j <= WORDS_COUNT; $j++) {
+
+    $sql .= ", ?";
+}
+
+$sql .= ")";
+
+// Подготавливаем выражение
+$pdostmt = $dbh->prepare($sql);
+
+// Задаем значение плейсхолдерам для каждого слова и выполняем запрос
+for ($i = 1; $i <= WORDS_COUNT; $i++) {
+
+    $pdostmt->bindParam(1, $i);
+    $pdostmt->bindParam(2, $words[$i]['text']);
+    $pdostmt->bindParam(3, $words[$i]['firsProbability'], PDO::PARAM_STR);
+    $pdostmt->bindParam(4, $words[$i]['lastProbability'], PDO::PARAM_STR);
+
+    // Если для слова массив вероятностей появления следующих слов пуст
+    if (!$words[$i]['probability_next_is']) {
+
+        // то все значения оставшихся полей равны 0
+        for ($j = 5, $k = 1; $k <= WORDS_COUNT; $j++, $k++) {
+            $val = 0.0;
+            $pdostmt->bindParam($j, $val, PDO::PARAM_STR);
+        }
+    } else {
+
+        // Иначе к каждому плейсхолдеру привязываем значение соответствующей вероятности 
+        // или ноль, если элемент отсутствует
+        // $j - номер плейсхолдера
+        for ($j = 5, $k = 1; $k <= WORDS_COUNT; $j++, $k++) {
+
+            if (isset($words[$i]['probability_next_is'][$k])) {
+                $pdostmt->bindParam($j, $words[$i]['probability_next_is'][$k], PDO::PARAM_STR);
+            } else {
+                $val = 0.0;
+                $pdostmt->bindParam($j, $val, PDO::PARAM_STR);
+            }
+        }
+    }
+
+    // Выполняем вставку
+    $pdostmt->execute();
+}
