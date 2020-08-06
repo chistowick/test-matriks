@@ -1,7 +1,5 @@
 <?php
 
-require_once(__DIR__ . '/app/Database.php');
-
 define("PATH_TO_INPUT_FILE", __DIR__ . '/input/test_in.txt');
 
 // Если файл со входным текстом найден и доступен для чтения
@@ -13,9 +11,6 @@ if (is_readable(PATH_TO_INPUT_FILE)) {
     // Если файл не найден или не доступен для чтения
     die('Файл со входными данными не найден');
 }
-
-// Подключаемся к базе данных
-$dbh = Database::getConnection(__DIR__ . '/config/db.php');
 
 /**
  * Патч для того, чтобы файл с исходным текстом, присланный в кодировке Windows-1251 тоже распознавался
@@ -86,6 +81,7 @@ foreach ($phrases as $key => $phrase) {
             $words[$wordsCounter]['lastCount'] = 0; // Начальное значение счетчика последних появлений
             $words[$wordsCounter]['text'] = $part; // Текст самого слова
             $words[$wordsCounter]['numCount'] = 1; // Начальное значение счетчика появления слова в тексте
+            $words[$wordsCounter]['next_is_count'] = array(); // Массив счетчиков появления следующих слов
 
             // Если слово первое в массиве, увеличиваем счетчик первых вхождений
             if ($key_2 == 0) {
@@ -153,14 +149,46 @@ foreach ($words as $key_4 => $word) {
     $word['lastProbability'] = ($word['lastCount'] ?: 0) / PHRASES_COUNT;
 
     // Находим, с какой вероятностью после этого слова идут те или иные слова
-    foreach($word['next_is_count'] as $key_5 => $next_is_count){
+    foreach ($word['next_is_count'] as $key_5 => $next_is_count) {
 
         // Вероятность равна отношению количества появления слова-2 после слова-1
         // к общему количеству НЕпоследних появлений слова-1 в тексте
         $word['probability_next_is'][$key_5] = $next_is_count / ($word['numCount'] - $word['lastCount']);
-
     }
 
-    echo '<hr>' . $key_4 . '<br>';
-    var_dump($word);
+    // echo '<hr>' . $key_4 . '<br>';
+    // var_dump($word);
 }
+
+// Задаем значение количества фраз в тексте
+define("WORDS_COUNT", count($words));
+
+// Подключаем класс для соединения с БД 
+require_once(__DIR__ . '/app/Database.php');
+
+// Подключаемся к базе данных с конфигурацией в файле по адресу
+$dbh = Database::getConnection(__DIR__ . '/config/db.php');
+
+$tableName = 'words_probabilities' . date("His");
+
+// Формируем запрос на создание таблицы
+$sql = "CREATE TABLE IF NOT EXISTS `$tableName` ( ";
+$sql .= "`id` INT(10) NOT NULL , ";
+$sql .= "`text` VARCHAR(255) NOT NULL , ";
+$sql .= "`firsProbability` FLOAT(20) UNSIGNED NULL DEFAULT NULL, ";
+$sql .= "`lastProbability` FLOAT(20) UNSIGNED NULL DEFAULT NULL, ";
+
+// Формируем столбцы по количеству слов в массиве
+for ($i = 1; $i <= WORDS_COUNT; $i++) {
+    $sql .= "`$i` FLOAT(20) UNSIGNED NULL DEFAULT NULL, ";
+}
+
+$sql .= "PRIMARY KEY (id)) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci ENGINE = MyISAM";
+
+// Выполняем создание таблицы
+if ($pdostmt = $dbh->query($sql)) {
+
+    echo "<hr>";
+    echo "Таблица $tableName создана успешно";
+}
+
