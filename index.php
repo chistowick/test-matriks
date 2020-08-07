@@ -1,6 +1,16 @@
 <?php
 
+// Подключаем файл с функциями для генерации новых предложений
+require_once(__DIR__ . '/app/functions.php');
+
+// Подключаем класс для соединения с БД 
+require_once(__DIR__ . '/app/Database.php');
+
+// Подключаемся к базе данных с конфигурацией в файле по адресу
+$dbh = Database::getConnection(__DIR__ . '/config/db.php');
+
 define("PATH_TO_INPUT_FILE", __DIR__ . '/input/test_in.txt');
+define("PATH_TO_OUTPUT_FILE", __DIR__ . '/output/test_out.txt');
 
 // Если файл со входным текстом найден и доступен для чтения
 if (is_readable(PATH_TO_INPUT_FILE)) {
@@ -23,20 +33,18 @@ if (!mb_detect_encoding($inputTextString, "UTF-8", TRUE)) {
     $inputTextString = mb_convert_encoding($inputTextString, 'UTF-8', 'Windows-1251');
 }
 
-echo $inputTextString;
-echo "<hr>";
-
+// Массив слов и счетчик, используемый как для задания ключей
 $words = array();
 $wordsCounter = 0;
 
 // Regexp - разделители текста на фразы
 $pattern = "/[.!?;:]/u";
 
-// Разбиваем текст на фразы (без пустых подстрок) и записываем их в массив
+// Разбиваем текст на фразы (без пустых подстрок) и записываем их в массив для фраз
 $phrases = array();
 $phrases = preg_split($pattern, $inputTextString, 0, PREG_SPLIT_NO_EMPTY);
 
-// Задаем значение количества фраз в тексте
+// Вычисляем количество фраз в тексте
 define("PHRASES_COUNT", count($phrases));
 
 // Regexp - разделители фраз на слова
@@ -45,10 +53,10 @@ $pattern_2 = "/[-,`'\"\s]/u";
 // Перебираем все фразы по порядку
 foreach ($phrases as $key => $phrase) {
 
-    // Разбиваем каждую фразу по regexp $pattern_2
+    // Разбиваем каждую фразу по regexp $pattern_2 на отдельные слова, (без пустых подстрок)
     $parts = preg_split($pattern_2, $phrase, 0, PREG_SPLIT_NO_EMPTY);
 
-    // Получаем значение последнего ключа
+    // Получаем ключ последнего слова во фразе
     $lastKey = array_key_last($parts);
 
     // echo "[$key] = " . "$phrase" . "<br>";
@@ -56,7 +64,13 @@ foreach ($phrases as $key => $phrase) {
     // Наполняем основной массив словами и статистикой ($key_2 - ключи массива слов во фразе)
     foreach ($parts as $key_2 => $part) {
 
-        // Ищем текущее слово в массиве $words
+        /**
+         * Ищем текущее слово в массиве $words, если оно уже в нем есть,
+         * то статистику нужно собирать в уже существующий элемент
+         * 
+         * $marker - маркер того, что слово уже встречалось
+         * $originalKey - ключ, оригинального слова - того слова, которое встретилось первым
+         * */
         $marker = FALSE;
         $originalKey = FALSE;
 
@@ -76,7 +90,7 @@ foreach ($phrases as $key => $phrase) {
             // Повышаем счетчик слов (т.е. создаем новый уникальный идентификатор для слова)
             $wordsCounter = $wordsCounter + 1;
 
-            $words[$wordsCounter] = array();
+            $words[$wordsCounter] = array(); // Массив статистики для конкретного слова
             $words[$wordsCounter]['firstCount'] = 0; // Начальное значаение счетчика первых появлений
             $words[$wordsCounter]['lastCount'] = 0; // Начальное значение счетчика последних появлений
             $words[$wordsCounter]['text'] = $part; // Текст самого слова
@@ -96,7 +110,7 @@ foreach ($phrases as $key => $phrase) {
                 $words[$wordsCounter]['lastCount'] = 1;
             }
 
-            // Для всех слов во фразе начиная со второго, 
+            // Для всех слов во фразе начиная со второго: 
             // устанавливаем предыдущему слову количество появлений текущего слова после него
             if ($key_2 != 0) {
 
@@ -104,7 +118,7 @@ foreach ($phrases as $key => $phrase) {
             }
 
             // После всех манипуляций запоминаем ключ-идентификатор текущего слова,
-            // как $beforeKey для следующего слова
+            // как $beforeKey для работы со следующим словом
             $beforeKey = $wordsCounter;
         } else {
             // Если слово уже есть в массиве - добавляем единицу к счетчику появления слова
@@ -158,19 +172,10 @@ for ($l = 1; $l <= count($words); $l++) {
         // к общему количеству НЕпоследних появлений слова-1 в тексте
         $words[$l]['probability_next_is'][$key_5] = ($next_is_count / ($words[$l]['numCount'] - $words[$l]['lastCount']));
     }
-
-    // echo '<hr>' . $l . '<br>';
-    // var_dump($words[$l]);
 }
 
 // Задаем значение количества фраз в тексте
 define("WORDS_COUNT", count($words));
-
-// Подключаем класс для соединения с БД 
-require_once(__DIR__ . '/app/Database.php');
-
-// Подключаемся к базе данных с конфигурацией в файле по адресу
-$dbh = Database::getConnection(__DIR__ . '/config/db.php');
 
 $tableName = 'words_probabilities_' . date("H_i_s");
 
@@ -191,7 +196,6 @@ $sql .= "PRIMARY KEY (id)) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci ENGI
 // Выполняем создание таблицы
 if ($pdostmt = $dbh->query($sql)) {
 
-    echo "<hr>";
     echo "Таблица $tableName создана успешно";
 }
 
@@ -277,7 +281,7 @@ while ($row = $pdostmt->fetch(PDO::FETCH_ASSOC)) {
 $out = '';
 
 // Формируем 30 фраз в строку
-for ($i = 1; $i < 30; $i++) {
+for ($i = 1; $i <= 20; $i++) {
     // Определяем первое слово
     $firstWordId = defineFirstWordId($probabilityTable);
 
@@ -312,128 +316,8 @@ for ($i = 1; $i < 30; $i++) {
     $out .= "." . PHP_EOL;
 }
 
-echo "<hr>";
-echo $out;
+if (file_put_contents(PATH_TO_OUTPUT_FILE, $out)) {
 
-// Функции:
-
-/**
- * Возвращает id первого слова
- */
-function defineFirstWordId(array $tableProb)
-{
-    // Вычисляем сколько в массиве всего слов
-    $count = count($tableProb);
-
-    // Задаем множитель для удобства расчетов
-    $mod = 1000000;
-
-    $total = 0;
-
-    // Определяем сумму всех отрезков
-    for ($i = 1; $i <= $count; $i++) {
-
-        // Для упрощения расчетов, увеличиваем значение вероятности
-        $total += +$tableProb[$i]['firstProbability'] * $mod;
-    }
-
-    // Генерируем случайную точку на суммарном отрезке
-    if ($total >= 2) {
-
-        $dot = rand(1, $total);
-    } else {
-        // Если $total меньше 2, то считаем, что вероятность слишком мала, 
-        // и значит где-то ошибка в вычислении вероятностей
-        return FALSE;
-    }
-
-    $level = 0;
-
-    // Определяем в какой промежуток попала точка
-    for ($i = 1; $i <= $count; $i++) {
-
-        $level += +$tableProb[$i]['firstProbability'] * $mod;
-
-        // Как только точка попадет в нужный интервал, возвращаем $i = id соответсвующего слова
-        if ($dot <= $level) {
-            return $i;
-        }
-    }
-
-    // Если вдруг ничего не найдено, явно возвращаем false
-    return FALSE;
-}
-
-/**
- * Определяет по id последнее ли это слово
- * 
- * TRUE - Слово последнее
- * FALSE - Продолжаем дальше
- */
-function checkLastOrNotById(array $tableProb, int $id)
-{
-    // Задаем коэффициент для удобства расчетов
-    $mod = 1000000;
-
-    // Получаем значение lastProbability слова по его id
-    $lastProb = +$tableProb[$id]['lastProbability'];
-
-    // Генерируем число от 1/$mod до 1
-    $dot = rand(1, $mod) / $mod;
-
-    // Сравниваем $dot со значением вероятности, что слово последнее
-    if ($dot <= $lastProb) {
-
-        // Если точка попала в интервал, возвращаем TRUE (слово последнее!)
-        return TRUE;
-    } else {
-        // Иначе возвращаем FALSE
-        return FALSE;
-    }
-}
-
-/**
- * Возвращает id следующего слова
- */
-function getNextWordId(array $tableProb, int $currentId)
-{
-    // Вычисляем сколько в массиве элементов с вероятностями следования других слов
-    $count = count($tableProb[$currentId]) - 4; // -4 чтобы убрать поля id, text, lastProbability, firstProbability
-
-    // Задаем множитель для удобства расчетов
-    $mod = 1000000;
-
-    $total = 0;
-
-    // Определяем сумму всех отрезков
-    for ($i = 1; $i <= $count; $i++) {
-        // Для упрощения расчетов, увеличиваем значение вероятности
-        $total += +$tableProb[$currentId][$i] * $mod;
-    }
-
-    // Генерируем случайную точку на суммарном отрезке
-    if ($total >= 2) {
-
-        $dot = rand(1, $total);
-    } else {
-        // Если $total меньше 2, то считаем, что вероятность слишком мала, 
-        // и значит где-то ошибка в вычислении вероятностей
-        return FALSE;
-    }
-
-    $level = 0;
-
-    // Определяем в какой промежуток попала точка
-    for ($i = 1; $i <= $count; $i++) {
-
-        $level += +$tableProb[$currentId][$i] * $mod;
-
-        // Как только точка попадет в нужный интервал, возвращаем $i равный id следующего слова
-        if ($dot <= $level) {
-            return $i;
-        }
-    }
-
-    // Если вдруг ничего не найдено, явно возвращаем false
-    return FALSE;
+    echo "<br>";
+    echo "Файл с новым текстом готов";
 }
