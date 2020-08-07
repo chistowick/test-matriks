@@ -5,7 +5,7 @@ define("PATH_TO_INPUT_FILE", __DIR__ . '/input/test_in.txt');
 // Если файл со входным текстом найден и доступен для чтения
 if (is_readable(PATH_TO_INPUT_FILE)) {
 
-    $inputTextString = file_get_contents(PATH_TO_INPUT_FILE);
+    $inputTextString = trim(file_get_contents(PATH_TO_INPUT_FILE));
 } else {
 
     // Если файл не найден или не доступен для чтения
@@ -83,7 +83,7 @@ foreach ($phrases as $key => $phrase) {
             $words[$wordsCounter]['numCount'] = 1; // Начальное значение счетчика появления слова в тексте
             $words[$wordsCounter]['next_is_count'] = array(); // Массив счетчиков появления следующих слов
             $words[$wordsCounter]['probability_next_is'] = array(); // Массив вероятностей появления следующих слов
-            $words[$wordsCounter]['firsProbability'] = 0; // Вероятность, что слово первое (начальное значение)
+            $words[$wordsCounter]['firstProbability'] = 0; // Вероятность, что слово первое (начальное значение)
             $words[$wordsCounter]['lastProbability'] = 0; // Вероятность, что слово последнее (начальное значение)
 
             // Если слово первое в массиве, увеличиваем счетчик первых вхождений
@@ -143,10 +143,10 @@ foreach ($phrases as $key => $phrase) {
 }
 
 // Вычисляем вероятности
-for ($l = 1; $l <= count($words); $l++){
+for ($l = 1; $l <= count($words); $l++) {
 
     // Находим вероятность того, что слово первое во фразе
-    $words[$l]['firsProbability'] = ($words[$l]['firstCount'] ?: 0) / PHRASES_COUNT;
+    $words[$l]['firstProbability'] = ($words[$l]['firstCount'] ?: 0) / PHRASES_COUNT;
 
     // Находим вероятность того, что слово последнее во фразе
     $words[$l]['lastProbability'] = ($words[$l]['lastCount'] ?: 0) / PHRASES_COUNT;
@@ -159,8 +159,8 @@ for ($l = 1; $l <= count($words); $l++){
         $words[$l]['probability_next_is'][$key_5] = ($next_is_count / ($words[$l]['numCount'] - $words[$l]['lastCount']));
     }
 
-    echo '<hr>' . $l . '<br>';
-    var_dump($words[$l]);
+    // echo '<hr>' . $l . '<br>';
+    // var_dump($words[$l]);
 }
 
 // Задаем значение количества фраз в тексте
@@ -178,7 +178,7 @@ $tableName = 'words_probabilities_' . date("H_i_s");
 $sql = "CREATE TABLE IF NOT EXISTS `$tableName` ( ";
 $sql .= "`id` INT(10) NOT NULL , ";
 $sql .= "`text` VARCHAR(255) NOT NULL , ";
-$sql .= "`firsProbability` FLOAT(20) UNSIGNED NULL DEFAULT NULL, ";
+$sql .= "`firstProbability` FLOAT(20) UNSIGNED NULL DEFAULT NULL, ";
 $sql .= "`lastProbability` FLOAT(20) UNSIGNED NULL DEFAULT NULL, ";
 
 // Формируем столбцы по количеству слов в массиве
@@ -196,7 +196,7 @@ if ($pdostmt = $dbh->query($sql)) {
 }
 
 $sql = "INSERT INTO `$tableName`";
-$sql .= " (`id`, `text`, `firsProbability`, `lastProbability`";
+$sql .= " (`id`, `text`, `firstProbability`, `lastProbability`";
 
 // Формируем названия столбцов
 for ($i = 1; $i <= WORDS_COUNT; $i++) {
@@ -223,7 +223,7 @@ for ($i = 1; $i <= WORDS_COUNT; $i++) {
 
     $pdostmt->bindParam(1, $i);
     $pdostmt->bindParam(2, $words[$i]['text']);
-    $pdostmt->bindParam(3, $words[$i]['firsProbability'], PDO::PARAM_STR);
+    $pdostmt->bindParam(3, $words[$i]['firstProbability'], PDO::PARAM_STR);
     $pdostmt->bindParam(4, $words[$i]['lastProbability'], PDO::PARAM_STR);
 
     // Если для слова массив вероятностей появления следующих слов пуст
@@ -252,4 +252,188 @@ for ($i = 1; $i <= WORDS_COUNT; $i++) {
 
     // Выполняем вставку
     $pdostmt->execute();
+}
+
+// Получаем данные из базы
+// Формируем запрос
+$sql = "SELECT * FROM `$tableName`";
+
+// Выполняем запрос
+$pdostmt = $dbh->query($sql);
+
+$f = 1;
+// Извлечение всех строк результирующего набора
+while ($row = $pdostmt->fetch(PDO::FETCH_ASSOC)) {
+
+    $probabilityTable[$f] = $row;
+    // var_dump($probabilityTable[$f]);
+
+    $f++;
+}
+
+// var_dump($probabilityTable);
+
+// Определяем переменную, в которую будем записывать текст перед записью в файл
+$out = '';
+
+// Формируем 30 фраз в строку
+for ($i = 1; $i < 30; $i++) {
+    // Определяем первое слово
+    $firstWordId = defineFirstWordId($probabilityTable);
+
+    // Записываем первое слово в строку вывода
+    $out .= $probabilityTable[$firstWordId]['text'];
+
+    // Считаем первое слово текущим
+    $curentWordId = $firstWordId;
+
+    // Пока проверка текущего слова не вернет TRUE (т.е. слово последнее)
+    while (!checkLastOrNotById($probabilityTable, $curentWordId)) {
+
+        // Получаем id следующего слова
+        $nextWordId = getNextWordId($probabilityTable, $curentWordId);
+
+        // Если getNextWordId вернул FALSE т.е. слово не определено статистически как последнее
+        // в функции checkLastOrNotById, однако после него никакие слова во фразах не встречались
+        // выходим из while
+        if ($nextWordId === FALSE) {
+
+            break;
+        }
+
+        // Добавляем следующее слово к строке вывода
+        $out .= " " . $probabilityTable[$nextWordId]['text'];
+
+        // Теперь  следующее слово становится текущим словом и идет на проверку в while
+        $curentWordId = $nextWordId;
+    }
+
+    // Когда while закончился, ставим точку и конец строки
+    $out .= "." . PHP_EOL;
+}
+
+echo "<hr>";
+echo $out;
+
+// Функции:
+
+/**
+ * Возвращает id первого слова
+ */
+function defineFirstWordId(array $tableProb)
+{
+    // Вычисляем сколько в массиве всего слов
+    $count = count($tableProb);
+
+    // Задаем множитель для удобства расчетов
+    $mod = 1000000;
+
+    $total = 0;
+
+    // Определяем сумму всех отрезков
+    for ($i = 1; $i <= $count; $i++) {
+
+        // Для упрощения расчетов, увеличиваем значение вероятности
+        $total += +$tableProb[$i]['firstProbability'] * $mod;
+    }
+
+    // Генерируем случайную точку на суммарном отрезке
+    if ($total >= 2) {
+
+        $dot = rand(1, $total);
+    } else {
+        // Если $total меньше 2, то считаем, что вероятность слишком мала, 
+        // и значит где-то ошибка в вычислении вероятностей
+        return FALSE;
+    }
+
+    $level = 0;
+
+    // Определяем в какой промежуток попала точка
+    for ($i = 1; $i <= $count; $i++) {
+
+        $level += +$tableProb[$i]['firstProbability'] * $mod;
+
+        // Как только точка попадет в нужный интервал, возвращаем $i = id соответсвующего слова
+        if ($dot <= $level) {
+            return $i;
+        }
+    }
+
+    // Если вдруг ничего не найдено, явно возвращаем false
+    return FALSE;
+}
+
+/**
+ * Определяет по id последнее ли это слово
+ * 
+ * TRUE - Слово последнее
+ * FALSE - Продолжаем дальше
+ */
+function checkLastOrNotById(array $tableProb, int $id)
+{
+    // Задаем коэффициент для удобства расчетов
+    $mod = 1000000;
+
+    // Получаем значение lastProbability слова по его id
+    $lastProb = +$tableProb[$id]['lastProbability'];
+
+    // Генерируем число от 1/$mod до 1
+    $dot = rand(1, $mod) / $mod;
+
+    // Сравниваем $dot со значением вероятности, что слово последнее
+    if ($dot <= $lastProb) {
+
+        // Если точка попала в интервал, возвращаем TRUE (слово последнее!)
+        return TRUE;
+    } else {
+        // Иначе возвращаем FALSE
+        return FALSE;
+    }
+}
+
+/**
+ * Возвращает id следующего слова
+ */
+function getNextWordId(array $tableProb, int $currentId)
+{
+    // Вычисляем сколько в массиве элементов с вероятностями следования других слов
+    $count = count($tableProb[$currentId]) - 4; // -4 чтобы убрать поля id, text, lastProbability, firstProbability
+
+    // Задаем множитель для удобства расчетов
+    $mod = 1000000;
+
+    $total = 0;
+
+    // Определяем сумму всех отрезков
+    for ($i = 1; $i <= $count; $i++) {
+        // Для упрощения расчетов, увеличиваем значение вероятности
+        $total += +$tableProb[$currentId][$i] * $mod;
+    }
+
+    // Генерируем случайную точку на суммарном отрезке
+    if ($total >= 2) {
+
+        $dot = rand(1, $total);
+    } else {
+        // Если $total меньше 2, то считаем, что вероятность слишком мала, 
+        // и значит где-то ошибка в вычислении вероятностей
+        return FALSE;
+    }
+
+    $level = 0;
+
+    // Определяем в какой промежуток попала точка
+    for ($i = 1; $i <= $count; $i++) {
+
+        $level += +$tableProb[$currentId][$i] * $mod;
+
+        // Как только точка попадет в нужный интервал, возвращаем $i равный id следующего слова
+        if ($dot <= $level) {
+            return $i;
+        }
+    }
+
+    // Если вдруг ничего не найдено, явно возвращаем false
+    return FALSE;
 }
